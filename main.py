@@ -107,5 +107,36 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Извлекаем текст
         reader = PdfReader(file_path)
         text = ""
-        for page in reader.pages:  # ✅ Строка 110 — здесь должен быть отступ
-            text += page.extract_text() + "\n\n"  # ✅ Этот блок должен быть с отступом!
+        for page in reader.pages:
+            text += page.extract_text() + "\n\n"
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+        # Отправляем
+        with open(output_path, "rb") as f:
+            await update.message.reply_document(document=InputFile(f), caption=caption)
+
+        # Убираем временные файлы
+        os.remove(file_path)
+        os.remove(output_path)
+        increment_limit(user.id)
+
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        await update.message.reply_text("❌ Ошибка при извлечении текста. Попробуй другой PDF.")
+        if 'file_path' in locals() and os.path.exists(file_path):
+            os.remove(file_path)
+        if 'output_path' in locals() and os.path.exists(output_path):
+            os.remove(output_path)
+
+# Запуск
+def main():
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    logger.info("Бот запущен!")
+    application.run_polling()
+
+if __name__ == "__main__":
+    main()
