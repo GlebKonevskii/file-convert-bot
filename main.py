@@ -47,8 +47,8 @@ def start(update: Update, context: CallbackContext):
         return
     update.message.reply_text(
         "✨ Поддерживаю:\n"
-        "• PDF ↔ TXT\n"
-        "• DOCX ↔ TXT\n"
+        "• PDF → TXT\n"
+        "• DOCX → TXT\n"
         "• TXT → PDF\n\n"
         "Отправь файл для конвертации!\n"
         "Лимит: 10 конвертаций в день."
@@ -87,7 +87,7 @@ def handle_file(update: Update, context: CallbackContext):
 
     file = update.message.document
     file_path = f"/tmp/temp_{user.id}_{file.file_unique_id}"
-    
+
     try:
         file_obj = context.bot.get_file(file.file_id)
         file_obj.download(file_path)
@@ -129,16 +129,6 @@ def handle_file(update: Update, context: CallbackContext):
                     pdf.cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
             pdf.output(output_path)
             caption = "✅ TXT → PDF"
-
-        # TXT → DOCX
-        elif file_path.lower().endswith(".txt"):
-            output_path = file_path.replace(".txt", ".docx")
-            doc = Document()
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    doc.add_paragraph(line.strip())
-            doc.save(output_path)
-            caption = "✅ TXT → DOCX"
 
         else:
             update.message.reply_text(
