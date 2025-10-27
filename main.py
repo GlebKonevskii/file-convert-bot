@@ -5,8 +5,6 @@ from telegram import Update, InputFile
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 import requests
 from PyPDF2 import PdfReader
-from docx import Document
-from fpdf import FPDF
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -48,11 +46,7 @@ def start(update: Update, context: CallbackContext):
         )
         return
     update.message.reply_text(
-        "✨ Поддерживаю:\n"
-        "• PDF → TXT\n"
-        "• DOCX → TXT\n"
-        "• TXT → PDF\n\n"
-        "Отправь файл для конвертации!\n"
+        "✨ Отправь PDF-файл — я извлеку текст!\n\n"
         "Лимит: 10 конвертаций в день."
     )
 
@@ -91,8 +85,11 @@ def handle_file(update: Update, context: CallbackContext):
     if update.message.document:
         file = update.message.document
         mime_type = file.mime_type or ""
+        if not mime_type == "application/pdf":
+            update.message.reply_text("Отправь PDF-файл.")
+            return
     else:
-        update.message.reply_text("Отправь файл (документ).")
+        update.message.reply_text("Отправь PDF-файл.")
         return
 
     if not file:
@@ -104,50 +101,19 @@ def handle_file(update: Update, context: CallbackContext):
         file_path = f"/tmp/temp_{user.id}_{file.file_unique_id}"
         file_obj.download(file_path)
 
-        output_path = None
-        caption = ""
+        output_path = file_path.replace(".pdf", ".txt")
+        caption = "✅ PDF → TXT"
 
-        # PDF → TXT
-        if file_path.lower().endswith(".pdf"):
-            output_path = file_path.replace(".pdf", ".txt")
-            reader = PdfReader(file_path)
-            text = ""
-            for page in reader.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n\n"
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            caption = "✅ PDF → TXT"
+        # Извлекаем текст
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n\n"
 
-        # DOCX → TXT
-        elif file_path.lower().endswith(".docx"):
-            output_path = file_path.replace(".docx", ".txt")
-            doc = Document(file_path)
-            text = "\n".join([para.text for para in doc.paragraphs])
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            caption = "✅ DOCX → TXT"
-
-        # TXT → PDF
-        elif file_path.lower().endswith(".txt"):
-            output_path = file_path.replace(".txt", ".pdf")
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.set_font("Arial", size=12)
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    pdf.cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            pdf.output(output_path)
-            caption = "✅ TXT → PDF"
-
-        else:
-            update.message.reply_text(
-                "❌ Поддерживаю только PDF, DOCX, TXT."
-            )
-            os.remove(file_path)
-            return
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
 
         # Отправляем
         with open(output_path, "rb") as f:
@@ -160,7 +126,7 @@ def handle_file(update: Update, context: CallbackContext):
 
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        update.message.reply_text("❌ Ошибка конвертации. Попробуй другой файл.")
+        update.message.reply_text("❌ Ошибка при извлечении текста. Попробуй другой PDF.")
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
         if 'output_path' in locals() and os.path.exists(output_path):
