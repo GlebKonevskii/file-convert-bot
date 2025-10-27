@@ -1,6 +1,5 @@
 python-telegram-bot==20.7
-pdf2docx==0.5.7
-docx2pdf
+PyPDF2==3.0.1
+python-docx==0.8.11
 Pillow==10.3.0
-moviepy==1.0.3
 requests==2.31.0
