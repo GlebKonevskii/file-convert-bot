@@ -107,8 +107,5 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Извлекаем текст
         reader = PdfReader(file_path)
         text = ""
-        for page in reader.pages:
-           
-
-if __name__ == "__main__":
-    main()
+        for page in reader.pages:  # ✅ Строка 110 — здесь должен быть отступ
+            text += page.extract_text() + "\n\n"  # ✅ Этот блок должен быть с отступом!
