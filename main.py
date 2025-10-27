@@ -2,7 +2,7 @@ import os
 import logging
 from datetime import datetime, timedelta
 from telegram import Update, InputFile
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 import requests
 from PyPDF2 import PdfReader
 from docx import Document
@@ -23,7 +23,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Проверка подписки
-async def is_subscribed(user_id: int) -> bool:
+def is_subscribed(user_id: int) -> bool:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember"
     params = {"chat_id": CHANNEL_ID, "user_id": user_id}
     try:
@@ -39,15 +39,15 @@ def get_daily_reset():
     now = datetime.utcnow()
     return now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def start(update: Update, context: CallbackContext):
     user = update.effective_user
-    if not await is_subscribed(user.id):
-        await update.message.reply_text(
+    if not is_subscribed(user.id):
+        update.message.reply_text(
             f"🔒 Подпишись на канал, чтобы использовать бота:\n"
             f"https://t.me/{CHANNEL_USERNAME}"
         )
         return
-    await update.message.reply_text(
+    update.message.reply_text(
         "✨ Поддерживаю:\n"
         "• PDF → TXT\n"
         "• DOCX → TXT\n"
@@ -71,16 +71,16 @@ def increment_limit(user_id: int):
         user_limits[user_id]["count"] += 1
 
 # Обработка файлов
-async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def handle_file(update: Update, context: CallbackContext):
     user = update.effective_user
-    if not await is_subscribed(user.id):
-        await update.message.reply_text(
+    if not is_subscribed(user.id):
+        update.message.reply_text(
             f"Подпишись на канал: https://t.me/{CHANNEL_USERNAME}"
         )
         return
 
     if not check_limit(user.id):
-        await update.message.reply_text(
+        update.message.reply_text(
             "🚫 Достигнут лимит: 10 конвертаций в день.\n"
             "Завтра будет новый лимит!\n\n"
             f"Следи за обновлениями: https://t.me/{CHANNEL_USERNAME}"
@@ -92,7 +92,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file = update.message.document
         mime_type = file.mime_type or ""
     else:
-        await update.message.reply_text("Отправь файл (документ).")
+        update.message.reply_text("Отправь файл (документ).")
         return
 
     if not file:
@@ -100,9 +100,9 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # Скачиваем
-        file_obj = await context.bot.get_file(file.file_id)
+        file_obj = context.bot.get_file(file.file_id)
         file_path = f"/tmp/temp_{user.id}_{file.file_unique_id}"
-        await file_obj.download_to_drive(file_path)
+        file_obj.download(file_path)
 
         output_path = None
         caption = ""
@@ -143,7 +143,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
             caption = "✅ TXT → PDF"
 
         else:
-            await update.message.reply_text(
+            update.message.reply_text(
                 "❌ Поддерживаю только PDF, DOCX, TXT."
             )
             os.remove(file_path)
@@ -151,7 +151,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Отправляем
         with open(output_path, "rb") as f:
-            await update.message.reply_document(document=InputFile(f), caption=caption)
+            update.message.reply_document(document=f, caption=caption)
 
         # Убираем временные файлы
         os.remove(file_path)
@@ -160,7 +160,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("❌ Ошибка конвертации. Попробуй другой файл.")
+        update.message.reply_text("❌ Ошибка конвертации. Попробуй другой файл.")
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
         if 'output_path' in locals() and os.path.exists(output_path):
@@ -168,11 +168,15 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Запуск
 def main():
-    application = Application.builder().token(BOT_TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    updater = Updater(BOT_TOKEN, use_context=True)
+    dp = updater.dispatcher
+
+    dp.add_handler(CommandHandler("start", start))
+    dp.add_handler(MessageHandler(Filters.document, handle_file))
+
     logger.info("Бот запущен!")
-    application.run_polling()
+    updater.start_polling()
+    updater.idle()
 
 if __name__ == "__main__":
     main()
