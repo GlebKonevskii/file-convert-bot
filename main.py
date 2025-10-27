@@ -5,6 +5,8 @@ from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
 from PyPDF2 import PdfReader
+from docx import Document
+from fpdf import FPDF
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -46,7 +48,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     await update.message.reply_text(
-        "✨ Отправь PDF-файл — я извлеку текст!\n\n"
+        "✨ Поддерживаю:\n"
+        "• PDF → TXT\n"
+        "• DOCX → TXT\n"
+        "• TXT → PDF\n\n"
+        "Отправь файл для конвертации!\n"
         "Лимит: 10 конвертаций в день."
     )
 
@@ -54,7 +60,7 @@ def check_limit(user_id: int) -> bool:
     now = datetime.utcnow()
     if user_id not in user_limits:
         user_limits[user_id] = {"count": 0, "reset_time": get_daily_reset()}
-    user_data = user_limits[user_id]
+    user_data = user_limits[user.id]
     if now >= user_data["reset_time"]:
         user_data["count"] = 0
         user_data["reset_time"] = get_daily_reset()
@@ -82,14 +88,12 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     file = None
+    mime_type = ""
     if update.message.document:
         file = update.message.document
         mime_type = file.mime_type or ""
-        if not mime_type == "application/pdf":
-            await update.message.reply_text("Отправь PDF-файл.")
-            return
     else:
-        await update.message.reply_text("Отправь PDF-файл.")
+        await update.message.reply_text("Отправь файл (документ).")
         return
 
     if not file:
@@ -101,17 +105,50 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         file_path = f"/tmp/temp_{user.id}_{file.file_unique_id}"
         await file_obj.download_to_drive(file_path)
 
-        output_path = file_path.replace(".pdf", ".txt")
-        caption = "✅ PDF → TXT"
+        output_path = None
+        caption = ""
 
-        # Извлекаем текст
-        reader = PdfReader(file_path)
-        text = ""
-        for page in reader.pages:
-            text += page.extract_text() + "\n\n"
+        # PDF → TXT
+        if file_path.lower().endswith(".pdf"):
+            output_path = file_path.replace(".pdf", ".txt")
+            reader = PdfReader(file_path)
+            text = ""
+            for page in reader.pages:
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n\n"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            caption = "✅ PDF → TXT"
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(text)
+        # DOCX → TXT
+        elif file_path.lower().endswith(".docx"):
+            output_path = file_path.replace(".docx", ".txt")
+            doc = Document(file_path)
+            text = "\n".join([para.text for para in doc.paragraphs])
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            caption = "✅ DOCX → TXT"
+
+        # TXT → PDF
+        elif file_path.lower().endswith(".txt"):
+            output_path = file_path.replace(".txt", ".pdf")
+            pdf = FPDF()
+            pdf.add_page()
+            pdf.set_auto_page_break(auto=True, margin=15)
+            pdf.set_font("Arial", size=12)
+            with open(file_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    pdf.cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
+            pdf.output(output_path)
+            caption = "✅ TXT → PDF"
+
+        else:
+            await update.message.reply_text(
+                "❌ Поддерживаю только PDF, DOCX, TXT."
+            )
+            os.remove(file_path)
+            return
 
         # Отправляем
         with open(output_path, "rb") as f:
@@ -124,7 +161,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        await update.message.reply_text("❌ Ошибка при извлечении текста. Попробуй другой PDF.")
+        await update.message.reply_text("❌ Ошибка конвертации. Попробуй другой файл.")
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
         if 'output_path' in locals() and os.path.exists(output_path):
