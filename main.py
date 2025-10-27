@@ -4,17 +4,16 @@ from datetime import datetime, timedelta
 from telegram import Update, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
 import requests
-from pdf2docx import Converter
-from docx2pdf import convert as docx_to_pdf
+from PyPDF2 import PdfReader
+from docx import Document
 from PIL import Image
-from moviepy.editor import VideoFileClip
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 
-# Хранилище лимитов (в памяти — для MVP)
+# Хранилище лимитов
 user_limits = {}
 
 logging.basicConfig(
@@ -36,12 +35,10 @@ async def is_subscribed(user_id: int) -> bool:
         logger.error(f"Ошибка проверки: {e}")
         return False
 
-# Сброс лимита в 00:00 UTC
 def get_daily_reset():
     now = datetime.utcnow()
     return now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
 
-# /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     if not await is_subscribed(user.id):
@@ -51,16 +48,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     await update.message.reply_text(
-        "✨ Привет! Я — бот-конвертер.\n\n"
+        "✨ Отправь файл для конвертации!\n"
         "Поддерживаю:\n"
-        "• PDF ↔ DOCX\n"
         "• JPG ↔ PNG\n"
-        "• MP4 → MP3\n\n"
-        "Отправь файл — и я преобразую его!\n"
+        "• PDF → TXT\n"
+        "• DOCX → TXT\n\n"
         "Лимит: 10 конвертаций в день."
     )
 
-# Проверка лимита
 def check_limit(user_id: int) -> bool:
     now = datetime.utcnow()
     if user_id not in user_limits:
@@ -92,7 +87,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Определяем файл
     file = None
     mime_type = ""
     if update.message.document:
@@ -101,11 +95,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif update.message.photo:
         file = update.message.photo[-1]
         mime_type = "image/jpeg"
-    elif update.message.video:
-        file = update.message.video
-        mime_type = file.mime_type or "video/mp4"
     else:
-        await update.message.reply_text("Отправь файл (документ, фото или видео).")
+        await update.message.reply_text("Отправь файл (документ или фото).")
         return
 
     if not file:
@@ -120,20 +111,8 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         output_path = None
         caption = ""
 
-        # Конвертация
-        if mime_type == "application/pdf":
-            output_path = file_path.replace(".pdf", ".docx")
-            cv = Converter(file_path)
-            cv.convert(output_path, start=0, end=None)
-            cv.close()
-            caption = "✅ PDF → DOCX"
-
-        elif file_path.endswith(".docx"):
-            output_path = file_path.replace(".docx", ".pdf")
-            docx_to_pdf(file_path, output_path)
-            caption = "✅ DOCX → PDF"
-
-        elif mime_type.startswith("image/") or file_path.lower().endswith(('.jpg', '.jpeg', '.png')):
+        # JPG ↔ PNG
+        if mime_type.startswith("image/") or file_path.lower().endswith(('.jpg', '.jpeg', '.png')):
             img = Image.open(file_path)
             if file_path.lower().endswith(('.jpg', '.jpeg')):
                 output_path = file_path.replace(".jpg", ".png").replace(".jpeg", ".png")
@@ -146,12 +125,25 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 img.save(output_path, "JPEG")
                 caption = "✅ PNG → JPG"
 
-        elif mime_type.startswith("video/") or file_path.lower().endswith(".mp4"):
-            output_path = file_path.replace(".mp4", ".mp3")
-            video = VideoFileClip(file_path)
-            video.audio.write_audiofile(output_path, logger=None)
-            video.close()
-            caption = "✅ MP4 → MP3"
+        # PDF → TXT
+        elif file_path.lower().endswith(".pdf"):
+            output_path = file_path.replace(".pdf", ".txt")
+            reader = PdfReader(file_path)
+            text = ""
+            for page in reader.pages:
+                text += page.extract_text() + "\n\n"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            caption = "✅ PDF → TXT"
+
+        # DOCX → TXT
+        elif file_path.lower().endswith(".docx"):
+            output_path = file_path.replace(".docx", ".txt")
+            doc = Document(file_path)
+            text = "\n".join([para.text for para in doc.paragraphs])
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(text)
+            caption = "✅ DOCX → TXT"
 
         else:
             await update.message.reply_text("❌ Неподдерживаемый формат.")
@@ -180,7 +172,7 @@ def main():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(
-        filters.Document.ALL | filters.PHOTO | filters.VIDEO, handle_file
+        filters.Document.ALL | filters.PHOTO, handle_file
     ))
     logger.info("Бот запущен!")
     application.run_polling()
