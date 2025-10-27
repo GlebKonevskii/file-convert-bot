@@ -60,7 +60,7 @@ def check_limit(user_id: int) -> bool:
     now = datetime.utcnow()
     if user_id not in user_limits:
         user_limits[user_id] = {"count": 0, "reset_time": get_daily_reset()}
-    user_data = user_limits[user.id]
+    user_data = user_limits[user_id]
     if now >= user_data["reset_time"]:
         user_data["count"] = 0
         user_data["reset_time"] = get_daily_reset()
@@ -88,7 +88,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     file = None
-    mime_type = ""
     if update.message.document:
         file = update.message.document
         mime_type = file.mime_type or ""
