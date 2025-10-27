@@ -122,7 +122,7 @@ def handle_file(update: Update, context: CallbackContext):
         # Убираем временные файлы
         os.remove(file_path)
         os.remove(output_path)
-        increment_limit(user.id)
+        increment_limit(user_id)
 
     except Exception as e:
         logger.error(f"Ошибка: {e}")
