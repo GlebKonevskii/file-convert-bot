@@ -1,18 +1,17 @@
 import os
 import logging
 from datetime import datetime, timedelta
-from telegram import Update
+from telegram import Update, InputFile
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackContext
 import requests
 from PyPDF2 import PdfReader
-from docx import Document
-from fpdf import FPDF
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 CHANNEL_USERNAME = os.getenv("CHANNEL_USERNAME")
 
+# Хранилище лимитов
 user_limits = {}
 
 logging.basicConfig(
@@ -21,6 +20,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Проверка подписки
 def is_subscribed(user_id: int) -> bool:
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember"
     params = {"chat_id": CHANNEL_ID, "user_id": user_id}
@@ -46,11 +46,7 @@ def start(update: Update, context: CallbackContext):
         )
         return
     update.message.reply_text(
-        "✨ Поддерживаю:\n"
-        "• PDF → TXT\n"
-        "• DOCX → TXT\n"
-        "• TXT → PDF\n\n"
-        "Отправь файл для конвертации!\n"
+        "✨ Отправь PDF-файл — я извлеку текст!\n\n"
         "Лимит: 10 конвертаций в день."
     )
 
@@ -68,95 +64,82 @@ def increment_limit(user_id: int):
     if user_id in user_limits:
         user_limits[user_id]["count"] += 1
 
+# Обработка файлов
 def handle_file(update: Update, context: CallbackContext):
     user = update.effective_user
     if not is_subscribed(user.id):
-        update.message.reply_text(f"Подпишись: https://t.me/{CHANNEL_USERNAME}")
+        update.message.reply_text(
+            f"Подпишись на канал: https://t.me/{CHANNEL_USERNAME}"
+        )
         return
 
     if not check_limit(user.id):
         update.message.reply_text(
-            "🚫 Лимит исчерпан (10/день). Завтра будет новый!\n"
-            f"Канал: https://t.me/{CHANNEL_USERNAME}"
+            "🚫 Достигнут лимит: 10 конвертаций в день.\n"
+            "Завтра будет новый лимит!\n\n"
+            f"Следи за обновлениями: https://t.me/{CHANNEL_USERNAME}"
         )
         return
 
-    if not update.message.document:
-        update.message.reply_text("Отправь файл.")
+    file = None
+    if update.message.document:
+        file = update.message.document
+        mime_type = file.mime_type or ""
+        if not mime_type == "application/pdf":
+            update.message.reply_text("Отправь PDF-файл.")
+            return
+    else:
+        update.message.reply_text("Отправь PDF-файл.")
         return
 
-    file = update.message.document
-    file_path = f"/tmp/temp_{user.id}_{file.file_unique_id}"
+    if not file:
+        return
 
     try:
+        # Скачиваем
         file_obj = context.bot.get_file(file.file_id)
+        file_path = f"/tmp/temp_{user.id}_{file.file_unique_id}"
         file_obj.download(file_path)
 
-        output_path = None
-        caption = ""
+        output_path = file_path.replace(".pdf", ".txt")
+        caption = "✅ PDF → TXT"
 
-        # PDF → TXT
-        if file_path.lower().endswith(".pdf"):
-            output_path = file_path.replace(".pdf", ".txt")
-            reader = PdfReader(file_path)
-            text = ""
-            for page in reader.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n\n"
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            caption = "✅ PDF → TXT"
+        # Извлекаем текст
+        reader = PdfReader(file_path)
+        text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n\n"
 
-        # DOCX → TXT
-        elif file_path.lower().endswith(".docx"):
-            output_path = file_path.replace(".docx", ".txt")
-            doc = Document(file_path)
-            text = "\n".join([para.text for para in doc.paragraphs])
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(text)
-            caption = "✅ DOCX → TXT"
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(text)
 
-        # TXT → PDF
-        elif file_path.lower().endswith(".txt"):
-            output_path = file_path.replace(".txt", ".pdf")
-            pdf = FPDF()
-            pdf.add_page()
-            pdf.set_auto_page_break(auto=True, margin=15)
-            pdf.set_font("Arial", size=12)
-            with open(file_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    pdf.cell(0, 10, txt=line.encode('latin-1', 'replace').decode('latin-1'), ln=True)
-            pdf.output(output_path)
-            caption = "✅ TXT → PDF"
-
-        else:
-            update.message.reply_text(
-                "❌ Поддерживаю: PDF, DOCX, TXT."
-            )
-            os.remove(file_path)
-            return
-
+        # Отправляем
         with open(output_path, "rb") as f:
             update.message.reply_document(document=f, caption=caption)
 
+        # Убираем временные файлы
         os.remove(file_path)
         os.remove(output_path)
         increment_limit(user.id)
 
     except Exception as e:
         logger.error(f"Ошибка: {e}")
-        update.message.reply_text("❌ Ошибка конвертации.")
+        update.message.reply_text("❌ Ошибка при извлечении текста. Попробуй другой PDF.")
         if 'file_path' in locals() and os.path.exists(file_path):
             os.remove(file_path)
         if 'output_path' in locals() and os.path.exists(output_path):
             os.remove(output_path)
 
+# Запуск
 def main():
     updater = Updater(BOT_TOKEN, use_context=True)
     dp = updater.dispatcher
+
     dp.add_handler(CommandHandler("start", start))
     dp.add_handler(MessageHandler(Filters.document, handle_file))
+
     logger.info("Бот запущен!")
     updater.start_polling()
     updater.idle()
